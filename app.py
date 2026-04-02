@@ -28,17 +28,24 @@ def clean_url(raw: str) -> str:
 
 
 def decode_text(text: str) -> str:
-    """Decode unicode escapes and HTML entities, then strip HTML tags."""
+    """Decode unicode escapes, HTML entities and strip HTML tags."""
     if not text:
         return ""
+
+    # 1. Decode JSON-style unicode escapes \uXXXX → real character
     try:
         text = text.encode("utf-8").decode("unicode_escape")
     except (UnicodeDecodeError, ValueError):
         pass
+
+    # 2. Decode HTML entities: &amp; → &, &#39; → ', &lt; → <, etc.
     text = html.unescape(text)
+    # Preserve line breaks from block-level HTML elements
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</(p|div|li|h[1-6])>", "\n", text, flags=re.IGNORECASE)
+    # Strip all remaining HTML tags
     text = re.sub(r"<[^>]+>", "", text)
+    # Collapse excessive blank lines
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
