@@ -197,7 +197,7 @@ def scrape_collections(base_url: str, progress_bar, status_text) -> list[dict]:
 
             for c in collections:
                 handle      = c.get("handle", "")
-                description = decode_text(c.get("body_html", ""))
+                description = decode_text(c.get("description", ""))
                 image_src   = (c.get("image") or {}).get("src", "")
                 product_count = count_collection_products(session, base_url, handle)
 
