@@ -32,14 +32,21 @@ def decode_text(text: str) -> str:
     if not text:
         return ""
 
-    # 1. Decode JSON-style unicode escapes \uXXXX → real character
-    try:
-        text = text.encode("utf-8").decode("unicode_escape")
-    except (UnicodeDecodeError, ValueError):
-        pass
+    # Use regex to replace only literal \uXXXX sequences (e.g. \u003C -> <).
+    # Avoids unicode_escape codec which re-interprets as latin-1,
+    # corrupting real Unicode chars like curly quotes and non-breaking spaces.
+    text = re.sub(
+        r"\\u([0-9a-fA-F]{4})",
+        lambda m: chr(int(m.group(1), 16)),
+        text,
+    )
 
-    # 2. Decode HTML entities: &amp; → &, &#39; → ', &lt; → <, etc.
+    # Decode HTML entities: &amp; -> &, &#39; -> ', &nbsp; -> space, etc.
     text = html.unescape(text)
+
+    # Replace non-breaking spaces with regular spaces
+    text = text.replace("\u00a0", " ")
+
     # Preserve line breaks from block-level HTML elements
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</(p|div|li|h[1-6])>", "\n", text, flags=re.IGNORECASE)
