@@ -69,16 +69,22 @@ def make_session() -> requests.Session:
     return s
 
 
-def fetch_json(session: requests.Session, url: str) -> dict:
-    """GET a URL, handle rate limiting, return parsed JSON."""
-    while True:
+def fetch_json(session: requests.Session, url: str, max_retries: int = 6) -> dict:
+    """GET a URL, handle rate limiting with exponential backoff, return parsed JSON."""
+    backoff = 2
+    for attempt in range(max_retries):
         resp = session.get(url, timeout=20)
         if resp.status_code in (429, 430):
-            st.warning("Rate limited, waiting 5s before retrying...")
-            time.sleep(5)
+            # Respect Retry-After header if present, otherwise exponential backoff
+            retry_after = resp.headers.get("Retry-After")
+            wait = float(retry_after) if retry_after else backoff
+            st.warning(f"Rate limited, waiting {wait:.0f}s before retrying...")
+            time.sleep(wait)
+            backoff = min(backoff * 2, 30)
             continue
         resp.raise_for_status()
         return resp.json()
+    raise RuntimeError(f"Gave up after {max_retries} retries on {url}")
 
 
 # ─── Products ─────────────────────────────────────────────────────────────────
@@ -205,6 +211,7 @@ def scrape_collections(base_url: str, progress_bar, status_text) -> list[dict]:
 
             progress_bar.progress(min(page / 10, 0.95))
             page += 1
+            time.sleep(0.4)  # stay comfortably under Shopify's ~2 req/s limit
 
     progress_bar.progress(1.0)
     return all_rows
@@ -431,14 +438,13 @@ if has_products or has_collections:
             m2.metric("Total Products", int(fdf["Product Count"].sum()))
             m3.metric("Avg Products",   f"{fdf['Product Count'].mean():.1f}")
 
-            display_cols = [c for c in fdf.columns if c != "Description"]
+            display_cols = [c for c in fdf.columns if c not in ("Description", "Image URL")]
             st.dataframe(
                 fdf[display_cols],
                 use_container_width=True,
                 height=500,
                 column_config={
                     "Collection URL": st.column_config.LinkColumn("Collection URL"),
-                    "Image URL":      st.column_config.ImageColumn("Image", width="small"),
                     "Product Count":  st.column_config.NumberColumn("# Products"),
                 },
             )
