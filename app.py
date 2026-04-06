@@ -69,6 +69,19 @@ def make_session() -> requests.Session:
     return s
 
 
+def format_duration(seconds: float) -> str:
+    """Format a duration in seconds as a human-readable string."""
+    if seconds < 1:
+        return f"{seconds * 1000:.0f}ms"
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {int(secs)}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{int(hours)}h {int(minutes)}m {int(secs)}s"
+
+
 def fetch_json(session: requests.Session, url: str, max_retries: int = 6) -> dict:
     """GET a URL, handle rate limiting with exponential backoff, return parsed JSON."""
     backoff = 2
@@ -103,15 +116,17 @@ def scrape_products(base_url: str, limit: int, progress_bar, status_text) -> lis
                 break
 
             for p in products:
-                description = decode_text(p.get("body_html", ""))
+                raw_html    = p.get("body_html", "") or ""
+                description = decode_text(raw_html)
                 base_info = {
-                    "Product ID":   p.get("id", ""),
-                    "Title":        p.get("title", ""),
-                    "Vendor":       p.get("vendor", ""),
-                    "Product Type": p.get("product_type", ""),
-                    "Tags":         ", ".join(p.get("tags", [])),
-                    "Description":  description,
-                    "Handle":       p.get("handle", ""),
+                    "Product ID":        p.get("id", ""),
+                    "Title":             p.get("title", ""),
+                    "Vendor":            p.get("vendor", ""),
+                    "Product Type":      p.get("product_type", ""),
+                    "Tags":              ", ".join(p.get("tags", [])),
+                    "Description":       description,
+                    "Description (HTML)": raw_html,
+                    "Handle":            p.get("handle", ""),
                     "Published At": p.get("published_at", ""),
                     "Created At":   p.get("created_at", ""),
                     "Updated At":   p.get("updated_at", ""),
@@ -192,21 +207,23 @@ def scrape_collections(base_url: str, progress_bar, status_text) -> list[dict]:
 
             for c in collections:
                 handle      = c.get("handle", "")
-                description = decode_text(c.get("description", ""))
+                raw_html    = c.get("description", "") or ""
+                description = decode_text(raw_html)
                 image_src   = (c.get("image") or {}).get("src", "")
 
                 all_rows.append({
-                    "Collection ID":   c.get("id", ""),
-                    "Title":           c.get("title", ""),
-                    "Handle":          handle,
-                    "Description":     description,
-                    "Published At":    c.get("published_at", ""),
-                    "Updated At":      c.get("updated_at", ""),
-                    "Sort Order":      c.get("sort_order", ""),
-                    "Template Suffix": c.get("template_suffix", ""),
-                    "Product Count":   c.get("products_count", 0),
-                    "Image URL":       image_src,
-                    "Collection URL":  f"{base_url}/collections/{handle}",
+                    "Collection ID":     c.get("id", ""),
+                    "Title":             c.get("title", ""),
+                    "Handle":            handle,
+                    "Description":       description,
+                    "Description (HTML)": raw_html,
+                    "Published At":      c.get("published_at", ""),
+                    "Updated At":        c.get("updated_at", ""),
+                    "Sort Order":        c.get("sort_order", ""),
+                    "Template Suffix":   c.get("template_suffix", ""),
+                    "Product Count":     c.get("products_count", 0),
+                    "Image URL":         image_src,
+                    "Collection URL":    f"{base_url}/collections/{handle}",
                 })
 
             progress_bar.progress(min(page / 10, 0.95))
@@ -312,14 +329,22 @@ if scrape_btn and store_url:
     do_products    = mode in ["📦 Products",    "📦 + 🗂️ Both"]
     do_collections = mode in ["🗂️ Collections", "📦 + 🗂️ Both"]
 
+    overall_start = time.perf_counter()
+
     if do_products:
         st.subheader("Scraping products...")
         prog_p = st.progress(0)
         stat_p = st.empty()
         try:
+            t0 = time.perf_counter()
             rows = scrape_products(cleaned, product_limit, prog_p, stat_p)
+            elapsed = time.perf_counter() - t0
             st.session_state.df_products = pd.DataFrame(rows)
-            stat_p.text(f"✅ {len(rows)} variants across {st.session_state.df_products['Product ID'].nunique()} products")
+            stat_p.text(
+                f"✅ {len(rows)} variants across "
+                f"{st.session_state.df_products['Product ID'].nunique()} products "
+                f"in {format_duration(elapsed)}"
+            )
         except Exception as e:
             st.error(f"Products scrape failed: {e}")
 
@@ -328,11 +353,16 @@ if scrape_btn and store_url:
         prog_c = st.progress(0)
         stat_c = st.empty()
         try:
+            t0 = time.perf_counter()
             rows = scrape_collections(cleaned, prog_c, stat_c)
+            elapsed = time.perf_counter() - t0
             st.session_state.df_collections = pd.DataFrame(rows)
-            stat_c.text(f"✅ {len(rows)} collections found")
+            stat_c.text(f"✅ {len(rows)} collections found in {format_duration(elapsed)}")
         except Exception as e:
             st.error(f"Collections scrape failed: {e}")
+
+    total_elapsed = time.perf_counter() - overall_start
+    st.success(f"🎉 Scrape complete in **{format_duration(total_elapsed)}**")
 
 elif scrape_btn and not store_url:
     st.warning("Please enter a store URL first.")
@@ -382,7 +412,7 @@ if has_products or has_collections:
             m3.metric("Vendors",   fdf["Vendor"].nunique())
             m4.metric("Types",     fdf["Product Type"].nunique())
 
-            display_cols = [c for c in fdf.columns if c != "Description"]
+            display_cols = [c for c in fdf.columns if c not in ("Description", "Description (HTML)")]
             st.dataframe(
                 fdf[display_cols],
                 use_container_width=True,
@@ -438,7 +468,7 @@ if has_products or has_collections:
             m2.metric("Total Products", int(fdf["Product Count"].sum()))
             m3.metric("Avg Products",   f"{fdf['Product Count'].mean():.1f}")
 
-            display_cols = [c for c in fdf.columns if c not in ("Description", "Image URL")]
+            display_cols = [c for c in fdf.columns if c not in ("Description", "Description (HTML)", "Image URL")]
             st.dataframe(
                 fdf[display_cols],
                 use_container_width=True,
