@@ -74,7 +74,7 @@ def fetch_json(session: requests.Session, url: str) -> dict:
     while True:
         resp = session.get(url, timeout=20)
         if resp.status_code in (429, 430):
-            st.warning("Rate limited — waiting 5 s before retrying…")
+            st.warning("Rate limited, waiting 5s before retrying...")
             time.sleep(5)
             continue
         resp.raise_for_status()
@@ -89,7 +89,7 @@ def scrape_products(base_url: str, limit: int, progress_bar, status_text) -> lis
 
     with make_session() as session:
         while True:
-            status_text.text(f"Products — fetching page {page}… ({len(all_rows)} variants so far)")
+            status_text.text(f"Products, fetching page {page}... ({len(all_rows)} variants so far)")
             data = fetch_json(session, f"{base_url}/products.json?limit={limit}&page={page}")
             products = data.get("products", [])
 
@@ -166,28 +166,10 @@ def scrape_products(base_url: str, limit: int, progress_bar, status_text) -> lis
 
 # ─── Collections ──────────────────────────────────────────────────────────────
 
-def count_collection_products(session: requests.Session, base_url: str, handle: str) -> int:
-    """Count total products in a collection by paging through its products.json."""
-    count = 0
-    page  = 1
-    while True:
-        try:
-            data     = fetch_json(session, f"{base_url}/collections/{handle}/products.json?limit=250&page={page}")
-            products = data.get("products", [])
-            if not products:
-                break
-            count += len(products)
-            page  += 1
-            time.sleep(0.1)
-        except Exception:
-            break
-    return count
-
-
 def scrape_collections(base_url: str, progress_bar, status_text) -> list[dict]:
     """
     Page through /collections.json (max 30 per page) until empty.
-    Also counts products per collection via /collections/{handle}/products.json.
+    Uses the products_count field returned directly by Shopify, no extra requests.
     """
     all_rows = []
     page     = 1
@@ -195,7 +177,7 @@ def scrape_collections(base_url: str, progress_bar, status_text) -> list[dict]:
 
     with make_session() as session:
         while True:
-            status_text.text(f"Collections — fetching page {page}… ({len(all_rows)} collections so far)")
+            status_text.text(f"Collections, fetching page {page}... ({len(all_rows)} collections so far)")
             data        = fetch_json(session, f"{base_url}/collections.json?limit={LIMIT}&page={page}")
             collections = data.get("collections", [])
 
@@ -206,7 +188,6 @@ def scrape_collections(base_url: str, progress_bar, status_text) -> list[dict]:
                 handle      = c.get("handle", "")
                 description = decode_text(c.get("description", ""))
                 image_src   = (c.get("image") or {}).get("src", "")
-                product_count = count_collection_products(session, base_url, handle)
 
                 all_rows.append({
                     "Collection ID":   c.get("id", ""),
@@ -217,15 +198,13 @@ def scrape_collections(base_url: str, progress_bar, status_text) -> list[dict]:
                     "Updated At":      c.get("updated_at", ""),
                     "Sort Order":      c.get("sort_order", ""),
                     "Template Suffix": c.get("template_suffix", ""),
-                    "Product Count":   product_count,
+                    "Product Count":   c.get("products_count", 0),
                     "Image URL":       image_src,
                     "Collection URL":  f"{base_url}/collections/{handle}",
                 })
-                time.sleep(0.2)
 
             progress_bar.progress(min(page / 10, 0.95))
             page += 1
-            time.sleep(0.3)
 
     progress_bar.progress(1.0)
     return all_rows
@@ -287,8 +266,7 @@ with st.sidebar:
     st.markdown(
         "**Endpoints used**\n\n"
         "- `/products.json?limit=250&page=N`\n"
-        "- `/collections.json?limit=30&page=N`\n"
-        "- `/collections/{handle}/products.json`\n\n"
+        "- `/collections.json?limit=30&page=N`\n\n"
         "Pages until an empty array is returned."
     )
 
@@ -314,12 +292,12 @@ if scrape_btn and store_url:
     cleaned = clean_url(store_url)
     st.session_state.store = cleaned
 
-    with st.spinner("Connecting…"):
+    with st.spinner("Connecting..."):
         try:
             r = requests.get(f"{cleaned}/products.json?limit=1&page=1", timeout=10)
             r.raise_for_status()
         except Exception as e:
-            st.error(f"❌ Could not reach `{cleaned}` — is this a public Shopify store?\n\n`{e}`")
+            st.error(f"❌ Could not reach `{cleaned}`, is this a public Shopify store?\n\n`{e}`")
             st.stop()
 
     st.info(f"✅ Connected to **{cleaned}**")
@@ -328,7 +306,7 @@ if scrape_btn and store_url:
     do_collections = mode in ["🗂️ Collections", "📦 + 🗂️ Both"]
 
     if do_products:
-        st.subheader("Scraping products…")
+        st.subheader("Scraping products...")
         prog_p = st.progress(0)
         stat_p = st.empty()
         try:
@@ -339,7 +317,7 @@ if scrape_btn and store_url:
             st.error(f"Products scrape failed: {e}")
 
     if do_collections:
-        st.subheader("Scraping collections…")
+        st.subheader("Scraping collections...")
         prog_c = st.progress(0)
         stat_c = st.empty()
         try:
